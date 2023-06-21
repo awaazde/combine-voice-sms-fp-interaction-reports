@@ -3,7 +3,7 @@ import os
 
 
 class CSVMerger:
-    def __init__(self, file1, file2, file3, file4, output_file):
+    def __init__(self, file1, file2, file3, file4_list, output_file):
         """
         Initializes the CSVMerger class.
 
@@ -17,7 +17,7 @@ class CSVMerger:
         self.file1 = file1
         self.file2 = file2
         self.file3 = file3
-        self.file4 = file4
+        self.file4_list = file4_list
         self.output_file = output_file
 
         self.common_field = ['phone_number', 'msg_id_y', 'id']
@@ -28,7 +28,7 @@ class CSVMerger:
                                 'duration', 'response_value', 'tag1_x', 'tag2_x', 'tag3_x', 'tag4_x', 'tag5_x', 'delivery_status_y',
                                 'Clicked', 'payment_success', 'payment_failed', 'Payment Amount']
 
-        # Rename the columns in the merged file for better understanding
+        # Rename the columns in the merged file for a better understanding
         self.rename_columns = {'phone_number_x': 'phone_number',
                                'tag1_x': 'tag1',
                                'tag2_x': 'tag2',
@@ -50,7 +50,7 @@ class CSVMerger:
         # Sort the DataFrame by 'sent_on' column in descending order
         df_sorted = df.sort_values(by='sent_on', ascending=False)
 
-        # Drop duplicates based on 'phone_number' and 'Payment Amount' columns
+        # Drop duplicates based on the 'phone_number' and 'Payment Amount' columns
         df_unique = df_sorted.drop_duplicates(
             subset=['phone_number', 'Payment Amount'], keep='first')
 
@@ -104,7 +104,7 @@ class CSVMerger:
         # Assign '#N/A' to 'Clicked' column when the value from data_dict is 0 (meaning 'Clicked' is 0)
         df.loc[df['Clicked'] == 0, 'Clicked'] = '#N/A'
 
-        # Update 'Payment Amount' column based on 'Clicked' column
+        # Update 'Payment Amount' column based on the 'Clicked' column
         df.loc[df['Clicked'] == '#N/A', 'Payment Amount'] = '#N/A'
 
         return df
@@ -133,7 +133,17 @@ class CSVMerger:
             dataFrame1 = self.read_csv_or_excel_file(self.file1)
             dataFrame2 = self.read_csv_or_excel_file(self.file2)
             dataFrame3 = self.read_csv_or_excel_file(self.file3)
-            dataFrame4 = self.read_csv_or_excel_file(self.file4)
+            # Create an empty DataFrame for merging file4 data
+            dataFrame4 = pd.DataFrame()
+
+            # Iterate over the list of file paths in file4_list
+            # Concatenate all the import_summery files into one single dataframe
+            for file in self.file4_list:
+                df = self.read_csv_or_excel_file(file)
+                dataFrame4 = pd.concat([dataFrame4, df])
+            # Drop duplicate rows based on 'phone_number' and 'id' columns
+            dataFrame4.drop_duplicates(subset=['phone_number', 'id'], inplace=True)
+
         except FileNotFoundError as e:
             print(f"Error: {e.filename} not found.")
             return
@@ -169,12 +179,13 @@ class CSVMerger:
 
 if __name__ == "__main__":
     # User inputs for file paths and output file name
-    file1 = input("Enter file path for Voice file: ")
-    file2 = input("Enter file path for SMS file: ")
-    file3 = input("Enter file path for Payment file: ")
-    file4 = input("Enter file path for Import Summary file: ")
-    output_file = input("Enter output file name: ")
+    file1 = input("Enter file path for Voice file(without quotes): ")
+    file2 = input("Enter file path for SMS file(without quotes): ")
+    file3 = input("Enter file path for Payment file(without quotes): ")
+    file4_paths = input("Enter file paths for Import Summary files (comma-separated): ")
+    files4 = file4_paths.split(",")
+    output_file = "PEN_Combined_Report.csv"
 
     # Create an instance of the CSVMerger class and call the merge_csv_files method
-    csv_merger = CSVMerger(file1, file2, file3, file4, output_file)
+    csv_merger = CSVMerger(file1, file2, file3, files4, output_file)
     csv_merger.merge_csv_files()
