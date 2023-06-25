@@ -20,21 +20,22 @@ class CSVMerger:
         self.file4_list = file4_list
         self.output_file = output_file
 
-        self.common_field = ['phone_number', 'msg_id_y', 'id']
+        # Common fields to merge the DataFrames on
+        self.common_field = ['Phone Number', 'phone_number', 'msg_id_y', 'id']
         self.columns_to_replace = ['Payment Amount']
 
-        # Select the desired columns for the output file
-        self.columns_to_keep = ['phone_number_x', 'name', 'language_x', 'requested_on_x', 'sent_on_x', 'delivery_status_x',
-                                'duration', 'response_value', 'tag1_x', 'tag2_x', 'tag3_x', 'tag4_x', 'tag5_x', 'delivery_status_y',
-                                'Clicked', 'payment_success', 'payment_failed', 'Payment Amount']
+        # Columns to keep from each DataFrame
+        self.columns_to_keep_part1 = ['phone_number_x', 'name', 'language_x', 'requested_on_x', 'sent_on_x', 'delivery_status_x',
+                                      'duration', 'response_value']
+        self.tag_fields = []
+        self.columns_to_keep_part2 = ['delivery_status_y', 'Clicked', 'payment_success', 'payment_failed', 'Payment Amount']
 
-        # Rename the columns in the merged file for a better understanding
+        # Select the desired columns for the output file
+        # part1 + tag_fields + part2
+        self.columns_to_keep = []
+
+        # Rename the columns in the merged file for better understanding
         self.rename_columns = {'phone_number_x': 'phone_number',
-                               'tag1_x': 'tag1',
-                               'tag2_x': 'tag2',
-                               'tag3_x': 'tag3',
-                               'tag4_x': 'tag4',
-                               'tag5_x': 'tag5',
                                'language_x': 'language',
                                'requested_on_x': 'requested_on',
                                'sent_on_x': 'sent_on',
@@ -50,7 +51,7 @@ class CSVMerger:
         # Sort the DataFrame by 'sent_on' column in descending order
         df_sorted = df.sort_values(by='sent_on', ascending=False)
 
-        # Drop duplicates based on the 'phone_number' and 'Payment Amount' columns
+        # Drop duplicates based on 'phone_number' and 'Payment Amount' columns
         df_unique = df_sorted.drop_duplicates(
             subset=['phone_number', 'Payment Amount'], keep='first')
 
@@ -73,7 +74,7 @@ class CSVMerger:
         # Iterate over the rows of the DataFrame
         for index, row in df.iterrows():
             # Extract the key from the combination of 'phone_number' and 'URL'
-            key = (row['phone_number'], row['URL'])
+            key = (row['Phone Number'], row['URL'])
 
             # Extract the 'Amount' and 'Status' values
             amount = row['Amount']
@@ -95,16 +96,16 @@ class CSVMerger:
 
         # Add new columns 'Clicked', 'payment_success', 'payment_failed' to the DataFrame
         df['Clicked'] = df.apply(lambda row: data_dict.get(
-            (row['phone_number'], row['URL']), [-1, -1, -1, -1])[1], axis=1)
+            (row['Phone Number'], row['URL']), [-1, -1, -1, -1])[1], axis=1)
         df['payment_success'] = df.apply(lambda row: data_dict.get(
-            (row['phone_number'], row['URL']), [-1, -1, -1, -1])[2], axis=1)
+            (row['Phone Number'], row['URL']), [-1, -1, -1, -1])[2], axis=1)
         df['payment_failed'] = df.apply(lambda row: data_dict.get(
-            (row['phone_number'], row['URL']), [-1, -1, -1, -1])[3], axis=1)
+            (row['Phone Number'], row['URL']), [-1, -1, -1, -1])[3], axis=1)
 
         # Assign '#N/A' to 'Clicked' column when the value from data_dict is 0 (meaning 'Clicked' is 0)
         df.loc[df['Clicked'] == 0, 'Clicked'] = '#N/A'
 
-        # Update 'Payment Amount' column based on the 'Clicked' column
+        # Update 'Payment Amount' column based on 'Clicked' column
         df.loc[df['Clicked'] == '#N/A', 'Payment Amount'] = '#N/A'
 
         return df
@@ -133,15 +134,11 @@ class CSVMerger:
             dataFrame1 = self.read_csv_or_excel_file(self.file1)
             dataFrame2 = self.read_csv_or_excel_file(self.file2)
             dataFrame3 = self.read_csv_or_excel_file(self.file3)
-            # Create an empty DataFrame for merging file4 data
             dataFrame4 = pd.DataFrame()
 
-            # Iterate over the list of file paths in file4_list
-            # Concatenate all the import_summery files into one single dataframe
             for file in self.file4_list:
                 df = self.read_csv_or_excel_file(file)
                 dataFrame4 = pd.concat([dataFrame4, df])
-            # Drop duplicate rows based on 'phone_number' and 'id' columns
             dataFrame4.drop_duplicates(subset=['phone_number', 'id'], inplace=True)
 
         except FileNotFoundError as e:
@@ -157,12 +154,20 @@ class CSVMerger:
 
         # Merge the DataFrames based on the common fields
         merged_file = pd.merge(dataFrame1, dataFrame2,
-                               on=self.common_field[0], how='inner')
-        merged_file = pd.merge(merged_file, dataFrame3,
-                               on=self.common_field[0], how='inner')
+                               on=self.common_field[1], how='inner')
         merged_file = pd.merge(
-            merged_file, dataFrame4, left_on=self.common_field[1], right_on=self.common_field[2], how='inner')
+            merged_file, dataFrame3, left_on=self.common_field[1], right_on=self.common_field[0], how='inner')
+        merged_file = pd.merge(
+            merged_file, dataFrame4, left_on=self.common_field[2], right_on=self.common_field[3], how='inner')
 
+        # Extract all the tag fields from the voice file 
+        # Assuming that the tag fields are same in both the voice and import_summary files
+        self.tag_fields = [column for column in merged_file.columns if (column.startswith('tag') and column.endswith('x'))]
+
+        # Rename the tag columns in the merged file 
+        self.rename_columns.update({tag_column: tag_column[:-2] for tag_column in self.tag_fields})
+
+        self.columns_to_keep = self.columns_to_keep_part1 + self.tag_fields + self.columns_to_keep_part2
         merged_file = merged_file[self.columns_to_keep]
         merged_file = merged_file.rename(columns=self.rename_columns)
 
@@ -179,10 +184,10 @@ class CSVMerger:
 
 if __name__ == "__main__":
     # User inputs for file paths and output file name
-    file1 = input("Enter file path for Voice file(without quotes): ")
-    file2 = input("Enter file path for SMS file(without quotes): ")
-    file3 = input("Enter file path for Payment file(without quotes): ")
-    file4_paths = input("Enter file paths for Import Summary files (comma-separated): ")
+    file1 = input("Enter file path for Voice file: ")
+    file2 = input("Enter file path for SMS file: ")
+    file3 = input("Enter file path for Payment file: ")
+    file4_paths = (input("Enter file paths for Import Summary files (comma-separated): "))
     files4 = file4_paths.split(",")
     output_file = "PEN_Combined_Report.csv"
 
