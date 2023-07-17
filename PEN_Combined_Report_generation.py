@@ -1,4 +1,5 @@
 import pandas as pd
+import datetime
 import os
 
 
@@ -21,21 +22,22 @@ class CSVMerger:
         self.output_file = output_file
 
         # Common fields to merge the DataFrames on
-        self.common_field = ['Phone Number', 'phone_number', 'msg_id_y', 'id']
-        self.columns_to_replace = ['Payment Amount']
+        self.common_field = ['Phone Number', 'phone_number', 'msg_id_x', 'id']
 
         # Columns to keep from each DataFrame
-        self.columns_to_keep_part1 = ['phone_number_x', 'name', 'language_x', 'requested_on_x', 'sent_on_x', 'delivery_status_x',
+        self.columns_to_keep_part1 = ['msg_id_x', 'msg_id_y', 'phone_number', 'name', 'language_x', 'requested_on_x', 'sent_on_x', 'delivery_status_x',
                                       'duration', 'response_value']
         self.tag_fields = []
-        self.columns_to_keep_part2 = ['delivery_status_y', 'Clicked', 'payment_success', 'payment_failed', 'Payment Amount']
+        self.columns_to_keep_part2 = ['delivery_status_y', 'Clicked', 'payment_success', 
+                                      'payment_failed', 'Payment Amount']
 
         # Select the desired columns for the output file
         # part1 + tag_fields + part2
         self.columns_to_keep = []
 
         # Rename the columns in the merged file for better understanding
-        self.rename_columns = {'phone_number_x': 'phone_number',
+        self.rename_columns = {'msg_id_x': 'msg_id_voice',
+                               'msg_id_y': 'msg_id_sms',
                                'language_x': 'language',
                                'requested_on_x': 'requested_on',
                                'sent_on_x': 'sent_on',
@@ -49,13 +51,29 @@ class CSVMerger:
         """
 
         # Sort the DataFrame by 'sent_on' column in descending order
-        df_sorted = df.sort_values(by='sent_on', ascending=False)
+        df_sorted = df.sort_values(by='Payment Date', ascending=False)
 
         # Drop duplicates based on 'phone_number' and 'Payment Amount' columns
         df_unique = df_sorted.drop_duplicates(
-            subset=['phone_number', 'Payment Amount'], keep='first')
+            subset=['Phone Number', 'URL'], keep='first')
 
         return df_unique
+
+    def get_last_attempt(self, df):
+        data_dict = {}
+
+        for index, row in df.iterrows():
+            key = row['phone_number']
+
+            if key in data_dict:
+                data_dict[key] += 1
+            else:
+                data_dict[key] = 1
+
+            df.at[index, 'Occurrence'] = data_dict[key]
+
+        df['Occurrence'] = df['Occurrence'].astype(int)
+        return df
 
     def get_clicked_values(self, df):
         """
@@ -70,6 +88,7 @@ class CSVMerger:
 
         # Create an empty dictionary to store the mapped data
         data_dict = {}
+        df_sorted = df.sort_values(by='Payment Date', ascending=True)
 
         # Iterate over the rows of the DataFrame
         for index, row in df.iterrows():
@@ -79,7 +98,7 @@ class CSVMerger:
             # Extract the 'Amount' and 'Status' values
             amount = row['Amount']
             status = 1 if row['Status'] in [
-                'clicked', 'payment_successful'] else 0
+                'clicked', 'payment_successful', 'payment_failed'] else 0
             is_payment_success = 'Success' if row['Status'] == 'payment_successful' else '#N/A'
             is_payment_fail = 'Failed' if row['Status'] == 'payment_failed' else '#N/A'
 
@@ -87,8 +106,10 @@ class CSVMerger:
             if key in data_dict:
                 # Update the 'Status' value by adding 1 and 'payment_success' as well as 'payment_failed' values
                 data_dict[key][1] += status
-                data_dict[key][2] = is_payment_success
-                data_dict[key][3] = is_payment_fail
+                if data_dict[key][2] == '#N/A':
+                    data_dict[key][2] = is_payment_success
+                if data_dict[key][3] == '#N/A':
+                    data_dict[key][3] = is_payment_fail
             else:
                 # Create a new list with 'Amount', initial 'Status' value, and 'payment' values
                 data_dict[key] = [amount, status,
@@ -122,6 +143,13 @@ class CSVMerger:
                 f"Error: Invalid file format for {file_path}. Only CSV and XLSX formats are supported.")
             return None
 
+    def convert_columns_to_string(self, df):
+        return df.astype(str)
+
+    def add_91_at_begining(self, df, field):
+        df[field] = '\'+91' + df[field]
+        return df
+
     def merge_csv_files(self):
         """
         Merges the CSV files based on common fields and performs necessary
@@ -140,6 +168,8 @@ class CSVMerger:
                 df = self.read_csv_or_excel_file(file)
                 dataFrame4 = pd.concat([dataFrame4, df])
             dataFrame4.drop_duplicates(subset=['phone_number', 'id'], inplace=True)
+            dataFrame4['id'] = dataFrame4['id'].fillna(0).astype(int)
+            dataFrame4['phone_number'] = dataFrame4['phone_number'].astype(str).str[:-2]
 
         except FileNotFoundError as e:
             print(f"Error: {e.filename} not found.")
@@ -148,37 +178,54 @@ class CSVMerger:
             print(f"Error: Failed to read files. {e}")
             return
 
-        # Filter the rows where 'delivery_status' is 'Reached'
-        dataFrame1 = dataFrame1[dataFrame1['delivery_status'] == 'Reached']
+        dataFrame1['response_value'] = dataFrame1['response_value'].fillna(' ')
+
+        # Convert all column to string in all the DataFrames
+        dataFrame1 = self.convert_columns_to_string(dataFrame1)
+        dataFrame2 = self.convert_columns_to_string(dataFrame2)
+        dataFrame3 = self.convert_columns_to_string(dataFrame3)
+        dataFrame4 = self.convert_columns_to_string(dataFrame4)
+
+        dataFrame3 = self.add_91_at_begining(dataFrame3, 'Phone Number')
         dataFrame3 = self.get_clicked_values(dataFrame3)
+        dataFrame3 = self.get_last_timestamp_value(dataFrame3)
+        # dataFrame3.to_csv('df3.csv', index=False)
 
-        # Merge the DataFrames based on the common fields
-        merged_file = pd.merge(dataFrame1, dataFrame2,
-                               on=self.common_field[1], how='inner')
-        merged_file = pd.merge(
-            merged_file, dataFrame3, left_on=self.common_field[1], right_on=self.common_field[0], how='inner')
-        merged_file = pd.merge(
-            merged_file, dataFrame4, left_on=self.common_field[2], right_on=self.common_field[3], how='inner')
+        dataFrame4 = self.add_91_at_begining(dataFrame4, 'phone_number')
+        dataFrame4 = dataFrame4.rename(columns={'id': 'msg_id'})
 
-        # Extract all the tag fields from the voice file 
+        tempDataFrame = dataFrame1.groupby(['msg_id', 'phone_number'])['message_attempt'].max().reset_index()
+        dataFrame1 = dataFrame1.merge(tempDataFrame, on=['msg_id', 'phone_number', 'message_attempt'])
+        dataFrame1 = self.get_last_attempt(dataFrame1)
+        dataFrame2 = self.get_last_attempt(dataFrame2)
+
+        merged_file = pd.merge(dataFrame1, dataFrame4, on=['msg_id', 'phone_number'], how='left')
+        # merged_file.to_csv('mer1.csv', index=False)
+
+        merged_file = pd.merge(
+            merged_file, dataFrame3, left_on=['phone_number', 'url'], right_on=['Phone Number', 'URL'], how='left')
+        # merged_file.to_csv('mer2.csv', index=False)
+
+        merged_file['Payment Amount'] = merged_file['Payment Amount'].fillna('#N/A')
+        merged_file['payment_success'] = merged_file['payment_success'].fillna('#N/A')
+        merged_file['payment_failed'] = merged_file['payment_failed'].fillna('#N/A')
+        merged_file['Clicked'] = merged_file['Clicked'].fillna(0)
+
+        merged_file = pd.merge(merged_file, dataFrame2, on=['phone_number', 'Occurrence'], how='left')
+        merged_file.to_csv('mer3.csv', index=False)
+
+        # Extract all the tag fields from the voice file
         # Assuming that the tag fields are same in both the voice and import_summary files
         self.tag_fields = [column for column in merged_file.columns if (column.startswith('tag') and column.endswith('x'))]
 
-        # Rename the tag columns in the merged file 
+        # Rename the tag columns in the merged file
         self.rename_columns.update({tag_column: tag_column[:-2] for tag_column in self.tag_fields})
 
         self.columns_to_keep = self.columns_to_keep_part1 + self.tag_fields + self.columns_to_keep_part2
         merged_file = merged_file[self.columns_to_keep]
         merged_file = merged_file.rename(columns=self.rename_columns)
+        merged_file['SMS Status'] = merged_file['SMS Status'].fillna('#N/A')
 
-        # Replace missing values with '#N/A' in the desired columns
-        merged_file[self.columns_to_replace] = merged_file[self.columns_to_replace].fillna(
-            '#N/A')
-
-        # Drop duplicate rows
-        merged_file = self.get_last_timestamp_value(merged_file)
-
-        # Save the merged DataFrame to a new CSV file
         merged_file.to_csv(self.output_file, index=False)
 
 
@@ -189,8 +236,12 @@ if __name__ == "__main__":
     file3 = input("Enter file path for Payment file: ")
     file4_paths = (input("Enter file paths for Import Summary files (comma-separated): "))
     files4 = file4_paths.split(",")
-    output_file = "PEN_Combined_Report.csv"
+
+    date = datetime.date.today()
+
+    combined_report = "PEN_Combined_Report_" + str(date) + ".csv"
+    summary_report = "PEN_Summary_Report_" + str(date) + ".csv"
 
     # Create an instance of the CSVMerger class and call the merge_csv_files method
-    csv_merger = CSVMerger(file1, file2, file3, files4, output_file)
+    csv_merger = CSVMerger(file1, file2, file3, files4, combined_report)
     csv_merger.merge_csv_files()
